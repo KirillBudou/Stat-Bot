@@ -1,6 +1,5 @@
 #Import everything
 import os
-import time
 from discord.ext import commands
 from keep_alive import keep_alive
 from replit import db
@@ -11,7 +10,6 @@ import json
 import ast
 
 #Connecting to Google Sheets API
-#Replace with actual json file
 mystring = os.environ['json']
 my_dict = ast.literal_eval(mystring)
 with open('data.json', 'w', encoding='utf-8') as f:
@@ -19,151 +17,133 @@ with open('data.json', 'w', encoding='utf-8') as f:
 sa = gspread.service_account(filename = 'data.json')
 sh = sa.open("Stat_Sheets")
 wks = sh.worksheet("Data")
-print('Rows: ', wks.row_count)
-print('Columns: ', wks.col_count)
 os.remove('data.json')
 
-#Date when the bot started
-startdate = date.today()
-cell = (int(str(date.today()+timedelta(days=2)-startdate).split()[0]))
+#Returns date in correct format for Google Sheets
+def changedate(day = date.today()):
+  day =str(day)
+  return '=DATE(' + day.replace("-",",") + ')'
 
+#Creates spreadsheet template
+if wks.acell('A1').value == None:
+  wks.update('A1:M1', [["Date","Sport_bool","Sport_t_xp","Sport_const","Japanese_bool","Japanese_t_xp","Japanese_const","Analytics_bool","Analytics_t_xp","Analytics_const","Mental_bool","Mental_t_xp","Mental_const"]])
+  wks.update('A2', changedate(), raw = False)
+  wks.update('D2:D5', [[0],[0],[changedate()],[changedate()]], raw = False)
+  wks.update('G2:G5', [[0],[0],[changedate()],[changedate()]], raw = False)
+  wks.update('J2:J5', [[0],[0],[changedate()],[changedate()]], raw = False)
+  wks.update('M2:M5', [[0],[0],[changedate()],[changedate()]], raw = False)
 
-#Debug. Prints today's date into console
-print(str(date.today()))
+#Date when the bot first started
+firstdate = datetime.strptime(wks.acell('A2').value, '%d/%m/%Y').date()
 
 #Global variable which is needed for leveling up. Each level is twice the basexplimit
 basexplimit = 1000
 
-#Delete quotation marks to reset every stat manually
-"""
-db["sxp"] = 0
-db["jxp"] = 0
-db["axp"] = 0
-db["mxp"] = 0
-db["slvl"] = 1
-db["jlvl"] = 1
-db["alvl"] = 1
-db['mlvl'] = 1
-"""
+#Obtains the needed cell number
+def getcell():
+  return int(str(date.today()+timedelta(days=2)-firstdate).split()[0])
 
-#Returns date in correct format for G Sheets
-def changedate():
-  day =str(date.today())
-  return '=DATE(' + day.replace("-",",") + ')'
-
-#Bot uses $ sign for commands
+#Bot uses "$" sign for commands
 client = commands.Bot(command_prefix = '$')
 
 #Blueprint for all skills
-class Subject:
-  def __init__(self,name,code,xp,lvl):
+class Skill:
+  def __init__(self,name,code,xp,lvl, days, dayl):
     self.name = name
     self.code = code
     self.xp = xp
     self.lvl = lvl
-    self.days = date.today()
-    self.dayl = date.today()
+    self.days = days
+    self.dayl = dayl
   #Whenever a task is completed
   def complete(self):
     global basexplimit, boolcodes
     #Sets the date if null
-    if wks.acell(f'A{cell}').value == None:
-      wks.update(f'A{cell}',changedate(), raw = False)
+    if wks.acell(f'A{getcell()}').value == None:
+      wks.update(f'A{getcell()}',changedate(), raw = False)
     #Value must not be inserted yet
-    if wks.acell(f'{self.code[0]}{cell}').value == None:
+    if wks.acell(f'{self.code[0]}{getcell()}').value == None:
       #Checks for unrecorded data and sets fails
-      if wks.acell(f'{self.code[0]}{cell-1}').value == None:
-        for c in range(cell-1):
+      if wks.acell(f'{self.code[0]}{getcell()-1}').value == None:
+        for c in range(getcell()-1):
           if wks.acell(f'{self.code[0]}{c+1}').value == None:
-            wks.update(f'A{c+1}',f'{changedate()}-{cell-c-1}', raw = False)
+            wks.update(f'A{c+1}',f'{changedate()}-{getcell()-c-1}', raw = False)
             wks.update(f'{self.code[0]}{c+1}', 'Failed')
+            if self.lvl==1:
+              wks.update(f'{self.code[1]}{c+1}',self.xp, raw = False)
+            else:
+              wks.update(f'{self.code[1]}{c+1}',f'{self.xp+2**(self.lvl-2)*basexplimit}', raw = False)
       reply = ""
       try:
         #Deducts xp if overdue
         if int(str(date.today()-self.dayl).split()[0]) > 2:
-          self.xp-=20*self.lvl*int(str(date.today()-self.dayl).split()[0])
-          reply = f"Congratulations on completing {self.name} excercise! Unfortunately, I have to deduct "+ str(20*self.lvl*int(str(date.today()-self.dayl).split()[0])-10) + f" {self.name} xp, because there have been no logs for {str(date.today()-self.dayl).split()[0]} days... but... I am glad to see you return! It's time to make a comeback!"
+          self.xp-=10*self.lvl*int(str(date.today()-self.dayl).split()[0])
+          reply = f"Congratulations on completing {self.name} excercise! Unfortunately, I have to deduct "+ str(10*self.lvl*int(str(date.today()-self.dayl).split()[0])-10) + f" {self.name} xp, because there were no logs for {str(date.today()-self.dayl).split()[0]} days, but don't give up! It's time to make a comeback!"
           self.xp+=10
           self.days = date.today()
-      except:
-        self.xp+=10
-        try:
-          #Checks if there's a streak and grants bonus xp
+        else:
+        #Checks if there's a streak and grants bonus xp
           if int(str(date.today()-self.days).split()[0]) > 3 and int(str(date.today()-self.days).split()[0]) < 20:
-            self.xp += 1*int(str(date.today()-self.days).split()[0])
-            reply = "You're on " + str(date.today()-self.days).split()[0] + " days streak! Keep it up! " + str(1*int(str(date.today()-self.days).split()[0])+10) + f" {self.name} xp has been added to your character!"
+            self.xp += 1*int(str(date.today()-self.days).split()[0])+10
+            reply = "You're on " + str(date.today()-self.days).split()[0] + " days streak! Keep it up! You have gained " + str(1*int(str(date.today()-self.days).split()[0])+10) + f" {self.name} xp!"
           #Checks if the limit has been hit
           elif int(str(date.today()-self.days).split()[0]) >= 20:
-            self.xp += 20
-            reply = "You're on " + str(date.today()-self.days).split()[0] + f" days streak! Keep it up! 30 {self.name} xp (limit) has been added to your character!"
-          else:
-              reply = f"Well done! 10 {self.name} xp has been added to your character!"
-        #I don't know if anything can go wrong, but I will leave it here
-        except:
-          reply = f"Well done! 10 {self.name} xp has been added to your character!!"
+            self.xp += 30
+            reply = "You're on " + str(date.today()-self.days).split()[0] + f" days streak! Keep it up! You have gained 30 {self.name} xp (limit)!"
+          #If there is no streak
+          elif int(str(date.today()-self.days).split()[0]) >= 1:
+              self.xp+=10
+              reply = f"Well done! You have gained 10 {self.name} xp!"
+      #If the difference between dates is less than 1. It is possible when the bot is first created
+      except:
+        self.xp+=10
+        reply = f"Well done! You have gained 10 {self.name} xp!"
       self.dayl = date.today()
       #Checks for level ups level downs
-      if self.xp>=basexplimit*self.lvl:
-        self.xp-=basexplimit*self.lvl
+      if self.xp>=2**(self.lvl-1)*basexplimit:
+        self.xp-=2**(self.lvl-1)*basexplimit
         self.lvl+=1
       elif self.xp<0:
-        self.lvl-=1
-        self.xp+=basexplimit*self.lvl
-      wks.update(f'{self.code[0]}{cell}','Completed')
-      wks.update(f'{self.code[1]}2',self.xp)
-      wks.update(f'{self.code[2]}{cell}',self.xp+basexplimit*(self.lvl-1))
-      wks.update(f'{self.code[3]}2',self.lvl)
+        if self.lvl !=1:
+          self.lvl-=1
+          self.xp+=2**(self.lvl-1)*basexplimit
+        else:
+          self.xp = 0
+      #Updates every stat in the spreadsheet
+      wks.update(f'{self.code[0]}{getcell()}','Completed')
+      wks.update(f'{self.code[2]}2',self.xp)
+      wks.update(f'{self.code[2]}4',changedate(self.days), raw = False)
+      wks.update(f'{self.code[2]}5',changedate(self.dayl), raw = False)
+      if self.lvl == 1:
+        wks.update(f'{self.code[1]}{getcell()}',self.xp)
+      else: 
+        wks.update(f'{self.code[1]}{getcell()}',self.xp+2**(self.lvl-2)*basexplimit)
+      wks.update(f'{self.code[2]}3',self.lvl)
     else:
       return f"You have already completed this today. Come back tomorrow!"
     
     return reply
   #Shows stats
   def stat(self):
-    return f'**{self.name}** - Level {self.lvl} [{self.xp}/{basexplimit*self.lvl}] ({math.floor(self.xp/(basexplimit*self.lvl)*100)}%)\n'
-  #Save stats
-  def save(self):
-    db[self.name[0].lower()+"xp"] = self.xp
-    db[(self.name[0]).lower()+"lvl"] = self.lvl
-  #Resets every stat
-  def reset(self):
-    self.xp = 0
-    self.lvl = 1
-    self.days = date.today()
-    self.dayl = date.today()
+    return f'**{self.name}** - Level {self.lvl} [{self.xp}/{2**(self.lvl-1)*basexplimit}] ({math.floor(self.xp/(2**(self.lvl-1)*basexplimit)*100)}%)\n'
 
-csport = Subject("Sport",['B','C','D','E'], db['sxp'],db['slvl'])
-cjapanese = Subject("Japanese", ['F','G','H','I'], db['jxp'],db['jlvl'])
-canalytics = Subject("Analytics", ['J','K','L','M'], db['axp'],db['alvl'])
-cmental = Subject("Mental", ['N','O','P','Q'], db['mxp'],db['mlvl'])
+#Class creation
+csport = Skill("Sport", ['B','C','D'], int(wks.acell('D2').value), int(wks.acell('D3').value), datetime.strptime(wks.acell('D4').value, '%d/%m/%Y').date(), datetime.strptime(wks.acell('D5').value, '%d/%m/%Y').date())
+cjapanese = Skill("Japanese", ['E','F','G'], int(wks.acell('G2').value), int(wks.acell('G3').value), datetime.strptime(wks.acell('G4').value, '%d/%m/%Y').date(), datetime.strptime(wks.acell('G5').value, '%d/%m/%Y').date())
+canalytics = Skill("Analytics", ['H','I','J'], int(wks.acell('J2').value), int(wks.acell('J3').value), datetime.strptime(wks.acell('J4').value, '%d/%m/%Y').date(), datetime.strptime(wks.acell('J5').value, '%d/%m/%Y').date())
+cmental = Skill("Mental", ['K','L','M'], int(wks.acell('M2').value), int(wks.acell('M3').value), datetime.strptime(wks.acell('M4').value, '%d/%m/%Y').date(), datetime.strptime(wks.acell('M5').value, '%d/%m/%Y').date())
 
 #When bot starts
 @client.event
 #when the bot starts
 async def on_ready():
-  print('Ganyu is ready!')
+  print('Stat Bot is ready!')
 
 #Shows stats
 @client.command(pass_context = True)
 async def stats(ctx):
   await ctx.send(csport.stat()+cjapanese.stat()+canalytics.stat()+cmental.stat())
-  time.sleep(1)
   await ctx.send("You're doing great! Keep ut up!")
-
-@client.command(pass_context = True)
-async def reset(ctx):
-  csport.reset()
-  cjapanese.reset()
-  canalytics.reset()
-  cmental.reset()
-  await ctx.send("Got it. Resetting everything...")
-
-@client.command(pass_context = True)
-async def save(ctx):
-  csport.save()
-  cjapanese.save()
-  canalytics.save()
-  cmental.save()
-  await ctx.send('Every stat has been successfully saved')
 
 @client.command(pass_context = True)
 async def sport(ctx):
@@ -183,47 +163,10 @@ async def mental(ctx):
 
 @client.command(pass_context = True)
 async def greeting(ctx):
-  await ctx.send("Hi! I am bot Ganyu!")
+  await ctx.send("Hi! I am a Stat Bot! I will make sure to help you achieve progress in your desired skills!\nIf you would like to view or change the code to personalise me, please use this link: https://github.com/KirillBungou/Stat-Bot")
 
-#List of features to implement. Notes can be made via Discord
-@client.command(pass_context = True)
-async def features(ctx):
-  await ctx.send(f"Oh, yes. The list of features that you wanted to implement. It should be somewhere here...")
-  time.sleep(3)
-  features = ""
-  count = 1
-  for thing in db["feature_list"]:
-    features += f'{count}) '
-    features+=thing
-    features+='\n'
-    count+=1
-  await ctx.send(f"{features}")
-  time.sleep(4)
-  await ctx.send(f"I believe that is everything that you wanted. If you have anything else you would like to implement, I can write it down")
-
-#Add a feature to the list
-@client.command(pass_context = True)
-async def addfeature(ctx, *message):
-  feature = str(message)[1:-1]
-  featurelist = feature.split(" ")
-  feature = ""
-  for thing in featurelist:
-    if featurelist.index(thing) == len(featurelist)-1:
-      feature+=thing[1:-1]
-      break
-    feature+=thing[1:-2]
-    feature+=" "
-  db["feature_list"].append(feature)
-  await ctx.send(f'Added a feature named "{feature}"!')
-
-#Delete a feature from the list
-@client.command(pass_context = True)
-async def delfeature(ctx, *message):
-  message = int(str(message)[2:-3])
-  await ctx.send(f'All right, removing "{db["feature_list"].pop(message-1)}" from the list!')  
-
-
-#The bot is running in repit. This keeps replit from shutting down the bot.
+#The bot is running on replit server. This command keeps replit from shutting down the bot
 keep_alive()
-#Replace with Discord Bot Token
+
+#Starts the bot
 client.run(os.environ['Token'])
